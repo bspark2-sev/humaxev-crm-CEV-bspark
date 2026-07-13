@@ -75,6 +75,9 @@
 
 
   /* 점검일자 삭제 버튼 */
+  .card-del-btn{position:absolute;top:6px;right:6px;z-index:2;background:var(--surface);border:1px solid var(--border);cursor:pointer;font-size:12px;line-height:1;opacity:0;padding:4px 6px;border-radius:6px;transition:all .15s;color:var(--muted)}
+  .card:hover .card-del-btn{opacity:.65}
+  .card-del-btn:hover{opacity:1!important;background:var(--danger-bg);border-color:var(--danger);color:var(--danger)}
   .upd-del-btn{background:none;border:none;cursor:pointer;font-size:12px;margin-left:6px;opacity:.5;padding:2px 4px;border-radius:4px;transition:all .15s}
   .upd-del-btn:hover{opacity:1;background:var(--danger-bg);color:var(--danger)}
   .upd-hist-row{display:flex;justify-content:space-between;align-items:center;padding:2px 0;border-bottom:1px solid var(--border);font-size:11px}
@@ -288,6 +291,13 @@ const firebaseConfig={
 firebase.initializeApp(firebaseConfig);
 const fbDB=firebase.database();
 const fbRef=fbDB.ref('pcd_edits');
+const fbDelRef=fbDB.ref('pcd_deleted');
+
+// 계약 행 단위 고유키 (같은 name의 다계약 국소를 구분)
+function rowKey(l){
+  return [l.name,l.installType,l.endDate].map(v=>String(v||'')).join('|').replace(/[.#$\/\[\]]/g,'_');
+}
+let deletedKeys={};
 
 const EDITABLE_FIELDS=['progress','visitor','updateDate','otherCPO','otherBrand','hevParking','fieldNote','etcNote','address','directions','memo','etcInfo','name','do_','sigungu','parking','installed','slow_','fast','grade','expYear','endDate','installType'];
 
@@ -308,7 +318,18 @@ function fbSave(name,fields,changes){
   fbRef.child(key).set(payload);
 }
 
+function deleteCard(li){
+  const l=filtered[li];if(!l)return;
+  if(!confirm(`"${l.name}" (${l.installType||'-'} / 만료 ${l.endDate||'-'}) 카드를 삭제하시겠습니까?\n삭제하면 모든 사용자에게 반영되며 복구할 수 없습니다.`))return;
+  fbDelRef.child(rowKey(l)).set(true);
+}
+
 function fbLoadAndApply(){
+  fbDelRef.on('value',snap=>{
+    deletedKeys=snap.val()||{};
+    locations=locations.filter(l=>!deletedKeys[rowKey(l)]);
+    applyFilters();buildStats();
+  });
   fbRef.on('value',snap=>{
     const edits=snap.val()||{};
     Object.values(edits).forEach(edit=>{
@@ -426,7 +447,7 @@ function dotFull(items){const data=items.map((it,i)=>it.val!==null?{...it,i}:nul
 
 function renderGrid(){const grid=document.getElementById('grid');const empty=document.getElementById('empty');if(!filtered.length){grid.innerHTML='';empty.style.display='block';return}empty.style.display='none';let html='';let lastSig='';
   filtered.forEach((l,li)=>{if(l.sigungu!==lastSig){html+=`<div class="sigungu-divider"><span class="sigungu-badge">${l.do_} ${l.sigungu||'기타'}</span><div class="sigungu-line"></div></div>`;lastSig=l.sigungu;}const ym=daysToYM(l.daysLeft);const gc=l.grade?'grade-'+l.grade.toLowerCase():'';const mini=dotMini([l.rev1,l.rev2,l.rev3,l.rev4,l.rev5,l.rev6]);
-    html+=`<div class="card" onclick="openDetail(${li})"><div class="c-bar ${l.urgency}"></div><div class="c-inner"><div class="c-top"><div class="c-name">${l.name||'-'}</div><div class="c-chips">${l.grade?`<span class="chip ${gc}">${l.grade}</span>`:''}${l.installed?`<span class="chip charger">${l.installed}기</span>`:''}${l.progress?`<span class="chip progress">${l.progress}</span>`:''}</div></div><div class="c-addr">${l.sigungu} · ${l.address||''}</div><div class="c-tags">${l.installType?`<span class="tag install-type">${l.installType}</span>`:''}${l.slow_?`<span class="tag">완속 ${l.slow_}</span>`:''}${l.fast&&l.fast!=='0'?`<span class="tag">급속 ${l.fast}</span>`:''}${isParking(l.hevParking)?'<span class="tag ok">병행주차✓</span>':''}${l.otherBrand?`<span class="tag">타사:${l.otherBrand}</span>`:''}</div><div class="c-rem-row"><span class="c-rem ${l.urgency}">${urgLabel(l.daysLeft)}</span>${ym?`<span class="c-ym ${l.urgency}">${ym}</span>`:''}</div>${l.endDate?`<div class="c-end">만료: ${l.endDate}</div>`:''}${l.updateDate?`<div class="c-visit ${visitStatus(l.updateDate)}">최근 점검: ${l.updateDate}${visitBadge(l.updateDate)}</div>`:'<div class="c-visit none">점검 기록 없음</div>'}<div class="c-foot"><div class="c-rev">6월 <span>${fmtRev(l.rev6)}</span>원/기${l.fastRevenue?` · 급속 <span>${fmtRev(Number(l.fastRevenue)||l.fastRevenue)}</span>`:''}</div>${mini}</div></div></div>`;});grid.innerHTML=html;}
+    html+=`<div class="card" onclick="openDetail(${li})"><button class="card-del-btn" onclick="event.stopPropagation();deleteCard(${li})" title="카드 삭제">🗑</button><div class="c-bar ${l.urgency}"></div><div class="c-inner"><div class="c-top"><div class="c-name">${l.name||'-'}</div><div class="c-chips">${l.grade?`<span class="chip ${gc}">${l.grade}</span>`:''}${l.installed?`<span class="chip charger">${l.installed}기</span>`:''}${l.progress?`<span class="chip progress">${l.progress}</span>`:''}</div></div><div class="c-addr">${l.sigungu} · ${l.address||''}</div><div class="c-tags">${l.installType?`<span class="tag install-type">${l.installType}</span>`:''}${l.slow_?`<span class="tag">완속 ${l.slow_}</span>`:''}${l.fast&&l.fast!=='0'?`<span class="tag">급속 ${l.fast}</span>`:''}${isParking(l.hevParking)?'<span class="tag ok">병행주차✓</span>':''}${l.otherBrand?`<span class="tag">타사:${l.otherBrand}</span>`:''}</div><div class="c-rem-row"><span class="c-rem ${l.urgency}">${urgLabel(l.daysLeft)}</span>${ym?`<span class="c-ym ${l.urgency}">${ym}</span>`:''}</div>${l.endDate?`<div class="c-end">만료: ${l.endDate}</div>`:''}${l.updateDate?`<div class="c-visit ${visitStatus(l.updateDate)}">최근 점검: ${l.updateDate}${visitBadge(l.updateDate)}</div>`:'<div class="c-visit none">점검 기록 없음</div>'}<div class="c-foot"><div class="c-rev">6월 <span>${fmtRev(l.rev6)}</span>원/기${l.fastRevenue?` · 급속 <span>${fmtRev(Number(l.fastRevenue)||l.fastRevenue)}</span>`:''}</div>${mini}</div></div></div>`;});grid.innerHTML=html;}
 
 // ── View Toggle ──
 function setView(mode){
