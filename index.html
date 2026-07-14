@@ -317,11 +317,24 @@ const fbRef=fbDB.ref('pcd_edits');
 const fbDelRef=fbDB.ref('pcd_deleted');
 
 // 계약 행 단위 고유키 (같은 name의 다계약 국소를 구분)
-function rowKey(l){
-  return [l.name,l.installType,l.endDate].map(v=>String(v||'')).join('|')
-    .replace(/[^0-9A-Za-z가-힣ㄱ-ㅎㅏ-ㅣ|()\-]/g,'_');
-}
+// 삭제 키 = LOCATIONS_INITIAL 내 행 인덱스(_idx).
+// name/installType/endDate는 편집 가능하므로 키로 쓰면 편집 시 키가 어긋난다.
+function rowKey(l){ return 'row'+l._idx; }
 let deletedKeys={};
+
+// 탭 배지와 목록이 같은 값을 쓰도록 단일 소스로 통일
+function trashCount(){
+  return allLocations.filter(l=>deletedKeys[rowKey(l)]).length;
+}
+
+// 구버전 키('이름|설치유형|만료일' 형식)가 Firebase에 남아 있으면 카운트가 어긋난다.
+// 현재 키 형식은 'row<숫자>' 뿐이므로, 그 외 키는 정리한다.
+function purgeStaleDelKeys(){
+  const valid=new Set(allLocations.map(rowKey));
+  Object.keys(deletedKeys).forEach(k=>{
+    if(!valid.has(k)) fbDelRef.child(k).remove();
+  });
+}
 
 const EDITABLE_FIELDS=['progress','visitor','updateDate','otherCPO','otherBrand','hevParking','fieldNote','etcNote','address','directions','memo','etcInfo','name','do_','sigungu','parking','installed','slow_','fast','grade','expYear','endDate','installType'];
 
@@ -354,6 +367,7 @@ function deleteCard(li){
 function fbLoadAndApply(){
   fbDelRef.on('value',snap=>{
     deletedKeys=snap.val()||{};
+    purgeStaleDelKeys();
     // master에서 매번 재구성 -> 복구 시에도 되살아남
     locations=allLocations.filter(l=>!deletedKeys[rowKey(l)]);
     applyFilters();buildStats();buildRegionTabs();
@@ -451,7 +465,7 @@ function processRows(allRows){
   locations.sort((a,b)=>{const ai=REGION_ORDER.indexOf(a.do_),bi=REGION_ORDER.indexOf(b.do_);if(ai!==bi)return(ai===-1?99:ai)-(bi===-1?99:bi);return(a.sigungu||'').localeCompare(b.sigungu||'','ko');});
   buildRegionTabs();buildFilters();buildStats();applyFilters();
 }
-function buildRegionTabs(){const cnt={};const ch={};REGION_ORDER.forEach(r=>{cnt[r]=0;ch[r]=0;});let totalCh=0;locations.forEach(l=>{if(cnt[l.do_]!==undefined){cnt[l.do_]++;ch[l.do_]+=Number(l.installed)||0;}totalCh+=Number(l.installed)||0;});const tabs=document.getElementById('region-tabs');const showCh=currentRegion?ch[currentRegion]:totalCh;const showCnt=currentRegion?cnt[currentRegion]:locations.length;let h=`<div class="region-tab all ${currentRegion===''?'active':''}" onclick="setRegion('')">전체 <span class="tab-cnt">${locations.length}</span></div>`;REGION_ORDER.forEach(r=>{h+=`<div class="region-tab ${currentRegion===r?'active':''}" onclick="setRegion('${r}')">${REGION_LABEL[r]} <span class="tab-cnt">${cnt[r]}</span></div>`;});h+=`<div class="region-tab list-tab ${currentView==='list'?'active':''}" id="btn-list" onclick="setView('list')">📋 목록</div>`;h+=`<div class="region-tab weekly-tab ${currentView==='weekly'?'active':''}" id="btn-weekly" onclick="setView('weekly')">📅 주간</div>`;h+=`<div class="region-tab trash-tab ${currentView==='trash'?'active':''}" id="btn-trash" onclick="setView('trash')">🗑 삭제됨 <span class="tab-cnt">${Object.keys(deletedKeys).length}</span></div>`;h+=`<div class="region-charger-info"><span class="rci-label">총 충전기</span><span class="rci-num">${showCh.toLocaleString()}</span><span class="rci-unit">기</span></div>`;tabs.innerHTML=h;}
+function buildRegionTabs(){const cnt={};const ch={};REGION_ORDER.forEach(r=>{cnt[r]=0;ch[r]=0;});let totalCh=0;locations.forEach(l=>{if(cnt[l.do_]!==undefined){cnt[l.do_]++;ch[l.do_]+=Number(l.installed)||0;}totalCh+=Number(l.installed)||0;});const tabs=document.getElementById('region-tabs');const showCh=currentRegion?ch[currentRegion]:totalCh;const showCnt=currentRegion?cnt[currentRegion]:locations.length;let h=`<div class="region-tab all ${currentRegion===''?'active':''}" onclick="setRegion('')">전체 <span class="tab-cnt">${locations.length}</span></div>`;REGION_ORDER.forEach(r=>{h+=`<div class="region-tab ${currentRegion===r?'active':''}" onclick="setRegion('${r}')">${REGION_LABEL[r]} <span class="tab-cnt">${cnt[r]}</span></div>`;});h+=`<div class="region-tab list-tab ${currentView==='list'?'active':''}" id="btn-list" onclick="setView('list')">📋 목록</div>`;h+=`<div class="region-tab weekly-tab ${currentView==='weekly'?'active':''}" id="btn-weekly" onclick="setView('weekly')">📅 주간</div>`;h+=`<div class="region-tab trash-tab ${currentView==='trash'?'active':''}" id="btn-trash" onclick="setView('trash')">🗑 삭제됨 <span class="tab-cnt">${trashCount()}</span></div>`;h+=`<div class="region-charger-info"><span class="rci-label">총 충전기</span><span class="rci-num">${showCh.toLocaleString()}</span><span class="rci-unit">기</span></div>`;tabs.innerHTML=h;}
 function setRegion(r){currentRegion=r;buildRegionTabs();updateSigungu();buildStats();applyFilters();}
 function buildFilters(){const progs=[...new Set(locations.map(l=>l.progress).filter(Boolean))].sort();const psel=document.getElementById('f-progress');psel.innerHTML='<option value="">전체 진행</option>';progs.forEach(p=>psel.innerHTML+=`<option value="${p}">${p}</option>`);updateSigungu();}
 function updateSigungu(){const base=currentRegion?locations.filter(l=>l.do_===currentRegion):locations;const sigs=[...new Set(base.map(l=>l.sigungu).filter(Boolean))].sort();const sel=document.getElementById('f-sigungu');sel.innerHTML='<option value="">전체 시구군</option>';sigs.forEach(s=>sel.innerHTML+=`<option value="${s}">${s}</option>`);}
@@ -495,8 +509,8 @@ function renderTrash(){
   const body=document.getElementById('trash-body');
   const cntEl=document.getElementById('trash-cnt');
   // 원본 배열에서 삭제키에 해당하는 행을 역조회 (과거 삭제분도 표시됨)
-  const rows=LOCATIONS_INITIAL.filter(l=>deletedKeys[rowKey(l)]);
-  cntEl.textContent=rows.length?`총 ${rows.length}건`:'';
+  const rows=allLocations.filter(l=>deletedKeys[rowKey(l)]);
+  cntEl.textContent=rows.length?`총 ${rows.length}건`:'';  // = trashCount()
   if(!rows.length){body.innerHTML='<div class="trash-empty">삭제된 카드가 없습니다.</div>';return;}
   let h='<div class="trash-list">';
   rows.forEach(l=>{
