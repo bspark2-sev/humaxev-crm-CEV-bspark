@@ -75,8 +75,8 @@
 
 
   /* 점검일자 삭제 버튼 */
-  .card-del-btn{position:absolute;top:6px;right:6px;z-index:2;background:var(--surface);border:1px solid var(--border);cursor:pointer;font-size:12px;line-height:1;opacity:0;padding:4px 6px;border-radius:6px;transition:all .15s;color:var(--muted)}
-  .card:hover .card-del-btn{opacity:.65}
+  .card-del-btn{position:absolute;bottom:8px;right:8px;z-index:10;background:var(--surface);border:1px solid var(--border);cursor:pointer;font-size:13px;line-height:1;opacity:.45;padding:5px 7px;border-radius:6px;transition:all .15s;color:var(--muted)}
+  .card:hover .card-del-btn{opacity:.9}
   .card-del-btn:hover{opacity:1!important;background:var(--danger-bg);border-color:var(--danger);color:var(--danger)}
   .upd-del-btn{background:none;border:none;cursor:pointer;font-size:12px;margin-left:6px;opacity:.5;padding:2px 4px;border-radius:4px;transition:all .15s}
   .upd-del-btn:hover{opacity:1;background:var(--danger-bg);color:var(--danger)}
@@ -132,6 +132,22 @@
     .region-charger-info .rci-num{font-size:13px}
   }
 
+  /* 삭제된 카드 뷰 */
+  #trash-container{display:none;padding:20px 1.5rem 40px;max-width:1200px;margin:0 auto}
+  #trash-container.show{display:block}
+  .trash-head{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:16px}
+  .trash-title{font-size:18px;font-weight:800;color:var(--text);display:flex;align-items:center;gap:8px}
+  .trash-title span{font-size:22px}
+  .trash-cnt{font-size:13px;color:var(--text3);font-weight:600}
+  .trash-empty{text-align:center;padding:60px 20px;color:var(--text3);font-size:14px}
+  .trash-list{display:flex;flex-direction:column;gap:8px}
+  .trash-row{display:flex;align-items:center;gap:12px;padding:12px 14px;background:var(--surface);border:1px solid var(--border);border-radius:10px;flex-wrap:wrap}
+  .trash-row .tr-name{font-weight:700;font-size:14px;color:var(--text);flex:1;min-width:180px}
+  .trash-row .tr-meta{font-size:12px;color:var(--text3);display:flex;gap:10px;flex-wrap:wrap}
+  .trash-row .tr-tag{padding:2px 8px;border-radius:6px;background:var(--surface2);font-size:11px;color:var(--text2);font-weight:600}
+  .tr-restore{padding:6px 12px;border-radius:7px;border:1.5px solid var(--accent);background:var(--surface);color:var(--accent);font-size:12px;font-weight:700;cursor:pointer;transition:all .15s}
+  .tr-restore:hover{background:var(--accent);color:#fff}
+  .region-tab.trash-tab{margin-left:0;border-color:#f87171;color:#dc2626;background:#fef2f2}.region-tab.trash-tab:hover{background:#fee2e2;border-color:#ef4444;color:#b91c1c}.region-tab.trash-tab.active{background:#ef4444;border-color:#ef4444;color:#fff;box-shadow:0 2px 8px rgba(239,68,68,.35)}body.dark .region-tab.trash-tab{background:rgba(239,68,68,.12);border-color:#b91c1c;color:#f87171}body.dark .region-tab.trash-tab.active{background:#dc2626;border-color:#dc2626;color:#fff}
   /* 주간 수정 내역 뷰 */
   #weekly-container{display:none;padding:20px 1.5rem 40px;max-width:1200px;margin:0 auto}
   #weekly-container.show{display:block}
@@ -265,6 +281,13 @@
   <input type="file" id="backup-file" accept=".json" onchange="importBackup(event)">
   <span class="backup-status" id="backup-status"></span>
 </div>
+<div id="trash-container">
+  <div class="trash-head">
+    <div class="trash-title"><span>🗑</span> 삭제된 카드</div>
+    <div class="trash-cnt" id="trash-cnt"></div>
+  </div>
+  <div id="trash-body"></div>
+</div>
 <div id="weekly-container">
   <div class="weekly-head">
     <div class="weekly-title"><span>📅</span> 주간 수정 내역</div>
@@ -295,7 +318,8 @@ const fbDelRef=fbDB.ref('pcd_deleted');
 
 // 계약 행 단위 고유키 (같은 name의 다계약 국소를 구분)
 function rowKey(l){
-  return [l.name,l.installType,l.endDate].map(v=>String(v||'')).join('|').replace(/[.#$\/\[\]]/g,'_');
+  return [l.name,l.installType,l.endDate].map(v=>String(v||'')).join('|')
+    .replace(/[^0-9A-Za-z가-힣ㄱ-ㅎㅏ-ㅣ|()\-]/g,'_');
 }
 let deletedKeys={};
 
@@ -321,14 +345,19 @@ function fbSave(name,fields,changes){
 function deleteCard(li){
   const l=filtered[li];if(!l)return;
   if(!confirm(`"${l.name}" (${l.installType||'-'} / 만료 ${l.endDate||'-'}) 카드를 삭제하시겠습니까?\n삭제하면 모든 사용자에게 반영되며 복구할 수 없습니다.`))return;
-  fbDelRef.child(rowKey(l)).set(true);
+  const now=new Date();
+  const at=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+  fbDelRef.child(rowKey(l)).set({at})
+    .catch(err=>{alert('삭제 실패: '+err.message);});
 }
 
 function fbLoadAndApply(){
   fbDelRef.on('value',snap=>{
     deletedKeys=snap.val()||{};
-    locations=locations.filter(l=>!deletedKeys[rowKey(l)]);
-    applyFilters();buildStats();
+    // master에서 매번 재구성 -> 복구 시에도 되살아남
+    locations=allLocations.filter(l=>!deletedKeys[rowKey(l)]);
+    applyFilters();buildStats();buildRegionTabs();
+    if(currentView==='trash')renderTrash();
   });
   fbRef.on('value',snap=>{
     const edits=snap.val()||{};
@@ -364,6 +393,7 @@ function fbLoadAndApply(){
 const REGION_ORDER=['평택','오산','충청','대전'];const REGION_LABEL={'평택':'평택','오산':'오산','충청':'충청','대전':'대전'};
 const C={no:0,do_:1,sigungu:2,name:3,parking:4,ratio:5,diff:6,installed:7,slow_:8,fast:9,expYear:10,endDate:11,rev1:12,rev2:13,rev3:14,rev4:15,fastRevenue:16,grade:17,progress:18,updateDate:19,visitor:20,otherCPO:21,otherBrand:22,hevParking:23,fieldNote:24,etcNote:25,address:26,directions:27,memo:28,etcInfo:29};
 const TODAY=new Date();let locations=[],filtered=[];let editSections={},currentRegion='',currentLi=-1,currentView='list';
+let allLocations=[]; // 삭제 필터 적용 전 원본 (복구 시 되살리기용)
 function toggleDark(){document.body.classList.toggle('dark');const d=document.body.classList.contains('dark');localStorage.setItem('hev_crm_dark',d?'1':'0');document.getElementById('dark-label').textContent=d?'라이트':'다크';}
 (function(){if(localStorage.getItem('hev_crm_dark')==='1'){document.body.classList.add('dark');setTimeout(()=>{const e=document.getElementById('dark-label');if(e)e.textContent='라이트';},0);}})();
 let mdTarget=null;const overlay=document.getElementById('overlay');overlay.addEventListener('mousedown',e=>{mdTarget=e.target});overlay.addEventListener('mouseup',e=>{if(mdTarget===overlay&&e.target===overlay)closeDetail();mdTarget=null;});
@@ -421,7 +451,7 @@ function processRows(allRows){
   locations.sort((a,b)=>{const ai=REGION_ORDER.indexOf(a.do_),bi=REGION_ORDER.indexOf(b.do_);if(ai!==bi)return(ai===-1?99:ai)-(bi===-1?99:bi);return(a.sigungu||'').localeCompare(b.sigungu||'','ko');});
   buildRegionTabs();buildFilters();buildStats();applyFilters();
 }
-function buildRegionTabs(){const cnt={};const ch={};REGION_ORDER.forEach(r=>{cnt[r]=0;ch[r]=0;});let totalCh=0;locations.forEach(l=>{if(cnt[l.do_]!==undefined){cnt[l.do_]++;ch[l.do_]+=Number(l.installed)||0;}totalCh+=Number(l.installed)||0;});const tabs=document.getElementById('region-tabs');const showCh=currentRegion?ch[currentRegion]:totalCh;const showCnt=currentRegion?cnt[currentRegion]:locations.length;let h=`<div class="region-tab all ${currentRegion===''?'active':''}" onclick="setRegion('')">전체 <span class="tab-cnt">${locations.length}</span></div>`;REGION_ORDER.forEach(r=>{h+=`<div class="region-tab ${currentRegion===r?'active':''}" onclick="setRegion('${r}')">${REGION_LABEL[r]} <span class="tab-cnt">${cnt[r]}</span></div>`;});h+=`<div class="region-tab list-tab ${currentView==='list'?'active':''}" id="btn-list" onclick="setView('list')">📋 목록</div>`;h+=`<div class="region-tab weekly-tab ${currentView==='weekly'?'active':''}" id="btn-weekly" onclick="setView('weekly')">📅 주간</div>`;h+=`<div class="region-charger-info"><span class="rci-label">총 충전기</span><span class="rci-num">${showCh.toLocaleString()}</span><span class="rci-unit">기</span></div>`;tabs.innerHTML=h;}
+function buildRegionTabs(){const cnt={};const ch={};REGION_ORDER.forEach(r=>{cnt[r]=0;ch[r]=0;});let totalCh=0;locations.forEach(l=>{if(cnt[l.do_]!==undefined){cnt[l.do_]++;ch[l.do_]+=Number(l.installed)||0;}totalCh+=Number(l.installed)||0;});const tabs=document.getElementById('region-tabs');const showCh=currentRegion?ch[currentRegion]:totalCh;const showCnt=currentRegion?cnt[currentRegion]:locations.length;let h=`<div class="region-tab all ${currentRegion===''?'active':''}" onclick="setRegion('')">전체 <span class="tab-cnt">${locations.length}</span></div>`;REGION_ORDER.forEach(r=>{h+=`<div class="region-tab ${currentRegion===r?'active':''}" onclick="setRegion('${r}')">${REGION_LABEL[r]} <span class="tab-cnt">${cnt[r]}</span></div>`;});h+=`<div class="region-tab list-tab ${currentView==='list'?'active':''}" id="btn-list" onclick="setView('list')">📋 목록</div>`;h+=`<div class="region-tab weekly-tab ${currentView==='weekly'?'active':''}" id="btn-weekly" onclick="setView('weekly')">📅 주간</div>`;h+=`<div class="region-tab trash-tab ${currentView==='trash'?'active':''}" id="btn-trash" onclick="setView('trash')">🗑 삭제됨 <span class="tab-cnt">${Object.keys(deletedKeys).length}</span></div>`;h+=`<div class="region-charger-info"><span class="rci-label">총 충전기</span><span class="rci-num">${showCh.toLocaleString()}</span><span class="rci-unit">기</span></div>`;tabs.innerHTML=h;}
 function setRegion(r){currentRegion=r;buildRegionTabs();updateSigungu();buildStats();applyFilters();}
 function buildFilters(){const progs=[...new Set(locations.map(l=>l.progress).filter(Boolean))].sort();const psel=document.getElementById('f-progress');psel.innerHTML='<option value="">전체 진행</option>';progs.forEach(p=>psel.innerHTML+=`<option value="${p}">${p}</option>`);updateSigungu();}
 function updateSigungu(){const base=currentRegion?locations.filter(l=>l.do_===currentRegion):locations;const sigs=[...new Set(base.map(l=>l.sigungu).filter(Boolean))].sort();const sel=document.getElementById('f-sigungu');sel.innerHTML='<option value="">전체 시구군</option>';sigs.forEach(s=>sel.innerHTML+=`<option value="${s}">${s}</option>`);}
@@ -455,7 +485,41 @@ function setView(mode){
   buildRegionTabs(); // 목록/주간 탭 active 상태 재반영
   document.getElementById('main-view').classList.toggle('hide',mode!=='list');
   document.getElementById('weekly-container').classList.toggle('show',mode==='weekly');
+  document.getElementById('trash-container').classList.toggle('show',mode==='trash');
   if(mode==='weekly')renderWeekly();
+  if(mode==='trash')renderTrash();
+}
+
+// ── 삭제된 카드 뷰 ──
+function renderTrash(){
+  const body=document.getElementById('trash-body');
+  const cntEl=document.getElementById('trash-cnt');
+  // 원본 배열에서 삭제키에 해당하는 행을 역조회 (과거 삭제분도 표시됨)
+  const rows=LOCATIONS_INITIAL.filter(l=>deletedKeys[rowKey(l)]);
+  cntEl.textContent=rows.length?`총 ${rows.length}건`:'';
+  if(!rows.length){body.innerHTML='<div class="trash-empty">삭제된 카드가 없습니다.</div>';return;}
+  let h='<div class="trash-list">';
+  rows.forEach(l=>{
+    const k=rowKey(l);
+    const v=deletedKeys[k];
+    const when=(v&&v.at)?v.at:'';
+    h+=`<div class="trash-row">
+      <div class="tr-name">${(l.name||'-').replace(/\n/g,' ')}</div>
+      <div class="tr-meta">
+        <span class="tr-tag">${REGION_LABEL[l.do_]||l.do_||'-'}</span>
+        ${l.installType?`<span class="tr-tag">${l.installType}</span>`:''}
+        ${l.endDate?`<span>만료 ${l.endDate}</span>`:''}
+        ${when?`<span>삭제 ${when}</span>`:''}
+      </div>
+      <button class="tr-restore" onclick="restoreCard('${k.replace(/'/g,"\\'")}')">복구</button>
+    </div>`;
+  });
+  body.innerHTML=h+'</div>';
+}
+
+function restoreCard(key){
+  if(!confirm('이 카드를 복구하시겠습니까?'))return;
+  fbDelRef.child(key).remove().catch(err=>{alert('복구 실패: '+err.message);});
 }
 
 // ── 주간 수정 내역 뷰 ──
@@ -742,7 +806,7 @@ const LOCATIONS_INITIAL = [{"no": "00000744", "do_": "평택", "sigungu": "평�
 
 function initFromData(){
   const today = new Date();
-  locations = LOCATIONS_INITIAL.map((d, idx) => {
+  allLocations = LOCATIONS_INITIAL.map((d, idx) => {
     let daysLeft = null;
     if(d.endDate){
       const end = new Date(d.endDate + 'T12:00:00Z');
@@ -756,11 +820,12 @@ function initFromData(){
       updateHistory: d.updateHistory || []
     };
   });
-  locations.sort((a,b)=>{
+  allLocations.sort((a,b)=>{
     const ai=REGION_ORDER.indexOf(a.do_),bi=REGION_ORDER.indexOf(b.do_);
     if(ai!==bi)return(ai===-1?99:ai)-(bi===-1?99:bi);
     return(a.sigungu||'').localeCompare(b.sigungu||'','ko');
   });
+  locations=allLocations.filter(l=>!deletedKeys[rowKey(l)]);
   buildRegionTabs();buildFilters();buildStats();applyFilters();
   fbLoadAndApply();
 }
